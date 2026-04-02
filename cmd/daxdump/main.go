@@ -107,6 +107,20 @@ func main() {
 
 	if *runECL {
 		gs := dax.NewTerminalHost(new(dax.GameState))
+
+		// Try to load party from same directory
+		partyDir := filepath.Dir(path)
+		if party, err := dax.LoadParty(partyDir); err == nil && len(party.Players) > 0 {
+			gs.GameState = party
+			fmt.Fprintf(os.Stderr, "Loaded %d characters from %s\n", len(party.Players), partyDir)
+			for i, p := range party.Players {
+				name := dax.PlayerName(p)
+				fmt.Fprintf(os.Stderr, "  [%d] %s HP %d/%d\n", i, name, p.Raw[0x1A4], p.Raw[0x78])
+			}
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not load party: %v\n", err)
+		}
+
 		entries := f.Entries()
 		if len(entries) == 0 {
 			fmt.Fprintf(os.Stderr, "no ECL entries found\n")

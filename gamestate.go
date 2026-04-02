@@ -9,6 +9,10 @@ type Player struct {
 	// Convenience accessors pull from Raw
 	HPCurrent byte
 	InCombat  bool
+
+	// Items and affects loaded from separate files
+	items   []Item
+	affects []Affect
 }
 
 func (p *Player) byteAt(off int) byte {
