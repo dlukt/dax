@@ -112,6 +112,11 @@ func (op Operand) String() string {
 	}
 }
 
+// Word returns the 16-bit value composed of Low and High bytes.
+func (op Operand) Word() uint16 {
+	return uint16(op.Low) | uint16(op.High)<<8
+}
+
 // resolveValue returns the immediate byte value if this is a literal operand.
 func (op Operand) resolveValue() byte {
 	return op.Low
