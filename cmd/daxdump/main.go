@@ -135,7 +135,7 @@ func main() {
 		d := dax.NewDriver(gs.GameState, f)
 		fmt.Printf("Running ECL block 0x%02X from %s\n", blockID, filepath.Base(path))
 		d.LoadArea(blockID)
-		fmt.Println("Done.")
+		d.GameLoop(gs)
 	}
 }
 

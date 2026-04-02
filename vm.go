@@ -103,11 +103,14 @@ func (vm *VM) BlockID() byte { return vm.blockID }
 func (vm *VM) ReloadFlag() bool { return vm.reloadFlag }
 
 // Run executes bytecode starting from the given offset until EXIT or error.
+const maxVMSteps = 100_000
+
 func (vm *VM) Run(entry uint16) {
 	vm.off = entry
 	vm.stop = false
 	vm.strIndex = 0
 
+	steps := 0
 	for !vm.stop {
 		if int(vm.off) >= len(vm.data) {
 			break
@@ -120,6 +123,11 @@ func (vm *VM) Run(entry uint16) {
 		}
 		vm.lastOpcode = opcode
 		dispatchTable[opcode](vm)
+
+		steps++
+		if steps >= maxVMSteps {
+			break
+		}
 	}
 }
 

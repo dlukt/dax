@@ -51,8 +51,10 @@ type GameState struct {
 	Players     []*Player
 	SelectedIdx int
 	MapX, MapY  int
-	MapDir      int
+	MapDir      int       // 0=N, 2=E, 4=S, 6=W (coab convention)
 	GameArea    byte
+	InDungeon   bool
+	PosChanged  bool      // set when VM writes to position addresses
 }
 
 // word reads a uint16 from a byte slice.
@@ -72,20 +74,26 @@ func putWord(b []byte, v uint16) {
 }
 
 // GetVar reads a 16-bit value from the VM address space.
+// Memory regions (ordered by priority for correct dispatch):
+//   0x8000-0x9DFF: ECL bytecode
+//   0x7C00-0x7FFF: Area2 (player/encounter) — but NOT addresses >= 0xC04B
+//   0x7A00-0x7BFF: Struct (ECL variables)
+//   0x4B00-0x4EFF: Area1 (game state, flags)
+//   everything else: globals (includes 0xC04B+ for map position)
 func (gs *GameState) GetVar(addr uint16) uint16 {
 	switch {
-	case addr >= 0x8000:
+	case addr >= 0x8000 && addr <= 0x9DFF:
 		loc := int(addr) - 0x8000
 		if loc < len(gs.ECLData) {
 			return uint16(gs.ECLData[loc])
 		}
 		return 0
 
-	case addr >= 0x7C00:
+	case addr >= 0x7C00 && addr <= 0x7FFF:
 		loc := addr - 0x7C00
 		return gs.getArea2(loc)
 
-	case addr >= 0x7A00:
+	case addr >= 0x7A00 && addr <= 0x7BFF:
 		loc := int(addr-0x7A00) * 2
 		if loc+2 <= len(gs.Struct) {
 			return word(gs.Struct[loc:])
@@ -107,17 +115,17 @@ func (gs *GameState) GetVar(addr uint16) uint16 {
 // SetVar writes a 16-bit value to the VM address space.
 func (gs *GameState) SetVar(addr uint16, val uint16) {
 	switch {
-	case addr >= 0x8000:
+	case addr >= 0x8000 && addr <= 0x9DFF:
 		loc := int(addr) - 0x8000
 		if loc < len(gs.ECLData) {
 			gs.ECLData[loc] = byte(val)
 		}
 
-	case addr >= 0x7C00:
+	case addr >= 0x7C00 && addr <= 0x7FFF:
 		loc := addr - 0x7C00
 		gs.setArea2(loc, val)
 
-	case addr >= 0x7A00:
+	case addr >= 0x7A00 && addr <= 0x7BFF:
 		loc := int(addr-0x7A00) * 2
 		if loc+2 <= len(gs.Struct) {
 			putWord(gs.Struct[loc:], val)
@@ -239,28 +247,87 @@ func (gs *GameState) setArea2(loc uint16, val uint16) {
 }
 
 // --- Global access ---
+// Region mem_type 4: addresses outside the 4 named regions.
+// Two sub-regions:
+//   - low globals (< 0xC04B): scattered game state vars
+//   - high globals (>= 0xC04B): map position (0xC04B=posX, 0xC04C=posY, 0xC04D=dir)
 
 func (gs *GameState) getGlobal(addr uint16) uint16 {
-	switch addr {
-	case 0xFB:
+	switch {
+	case addr == 0xFB:
 		return uint16(gs.MapX)
-	case 0xFC:
+	case addr == 0xFC:
 		return uint16(gs.MapY)
-	case 0x3DE:
+	case addr == 0x3DE:
 		return uint16(gs.MapDir)
+	case addr >= 0xC04B:
+		return gs.getHighGlobal(addr - 0xC04B)
 	default:
 		return 0
 	}
 }
 
 func (gs *GameState) setGlobal(addr uint16, val uint16) {
-	switch addr {
-	case 0xFB:
+	switch {
+	case addr == 0xFB:
 		gs.MapX = int(val)
-	case 0xFC:
+	case addr == 0xFC:
 		gs.MapY = int(val)
-	case 0x3DE:
+	case addr == 0x3DE:
 		gs.MapDir = int(val)
+	case addr >= 0xC04B:
+		gs.setHighGlobal(addr-0xC04B, val)
+	}
+}
+
+// getHighGlobal reads from the 0xC04B+ address space.
+func (gs *GameState) getHighGlobal(off uint16) uint16 {
+	switch off {
+	case 0: // 0xC04B: mapPosX
+		return uint16(gs.MapX)
+	case 1: // 0xC04C: mapPosY
+		return uint16(gs.MapY)
+	case 2: // 0xC04D: mapDirection / 2
+		return uint16(gs.MapDir / 2)
+	default:
+		return 0
+	}
+}
+
+// setHighGlobal writes to the 0xC04B+ address space.
+// Offsets are relative to 0xC04B: 0=posX, 1=posY, 2=direction/2.
+func (gs *GameState) setHighGlobal(off uint16, val uint16) {
+	switch off {
+	case 0: // 0xC04B: mapPosX
+		gs.MapX = int(int8(val))
+		gs.PosChanged = true
+	case 1: // 0xC04C: mapPosY
+		gs.MapY = int(int8(val))
+		gs.PosChanged = true
+	case 2: // 0xC04D: mapDirection (VM uses 0-3, engine uses 0,2,4,6)
+		dir := val
+		for {
+			switch dir {
+			case 0:
+				gs.MapDir = 0
+				gs.PosChanged = true
+				return
+			case 1:
+				gs.MapDir = 2
+				gs.PosChanged = true
+				return
+			case 2:
+				gs.MapDir = 4
+				gs.PosChanged = true
+				return
+			case 3:
+				gs.MapDir = 6
+				gs.PosChanged = true
+				return
+			default:
+				dir -= 4
+			}
+		}
 	}
 }
 

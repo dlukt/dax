@@ -88,6 +88,61 @@ func TestGameStateNoPlayer(t *testing.T) {
 	}
 }
 
+func TestGameStateMapPosition(t *testing.T) {
+	gs := new(GameState)
+
+	// Write position via high global addresses (0xC04B, 0xC04C, 0xC04D)
+	gs.SetVar(0xC04B, 5)  // posX
+	gs.SetVar(0xC04C, 10) // posY
+	gs.SetVar(0xC04D, 2)  // direction=2 → engine dir=4 (south)
+
+	if gs.MapX != 5 {
+		t.Errorf("MapX = %d, want 5", gs.MapX)
+	}
+	if gs.MapY != 10 {
+		t.Errorf("MapY = %d, want 10", gs.MapY)
+	}
+	if gs.MapDir != 4 {
+		t.Errorf("MapDir = %d, want 4", gs.MapDir)
+	}
+	if !gs.PosChanged {
+		t.Error("PosChanged should be true")
+	}
+
+	// Read back via high globals
+	if v := gs.GetVar(0xC04B); v != 5 {
+		t.Errorf("read MapX = %d, want 5", v)
+	}
+	if v := gs.GetVar(0xC04C); v != 10 {
+		t.Errorf("read MapY = %d, want 10", v)
+	}
+	if v := gs.GetVar(0xC04D); v != 2 { // direction/2
+		t.Errorf("read MapDir/2 = %d, want 2", v)
+	}
+
+	// Read via low globals
+	if v := gs.GetVar(0xFB); v != 5 {
+		t.Errorf("read 0xFB = %d, want 5", v)
+	}
+	if v := gs.GetVar(0xFC); v != 10 {
+		t.Errorf("read 0xFC = %d, want 10", v)
+	}
+	if v := gs.GetVar(0x3DE); v != 4 {
+		t.Errorf("read 0x3DE = %d, want 4", v)
+	}
+}
+
+func TestGameStateDirectionMapping(t *testing.T) {
+	gs := new(GameState)
+
+	for vmDir, engineDir := range []int{0, 2, 4, 6} {
+		gs.SetVar(0xC04D, uint16(vmDir))
+		if gs.MapDir != engineDir {
+			t.Errorf("vmDir=%d → MapDir=%d, want %d", vmDir, gs.MapDir, engineDir)
+		}
+	}
+}
+
 func TestDriverLoadArea(t *testing.T) {
 	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
 

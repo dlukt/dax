@@ -3,6 +3,7 @@ package dax
 import (
 	"bufio"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 type TerminalHost struct {
 	*GameState
 	reader *bufio.Reader
+	rng    *rand.Rand
 }
 
 // NewTerminalHost creates a Host with terminal I/O backed by the given GameState.
@@ -20,6 +22,7 @@ func NewTerminalHost(gs *GameState) *TerminalHost {
 	return &TerminalHost{
 		GameState: gs,
 		reader:    bufio.NewReader(os.Stdin),
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -142,8 +145,7 @@ func (t *TerminalHost) GetRandom(max int) int {
 	if max <= 0 {
 		return 0
 	}
-	// Simple deterministic random for now — will be replaced with real RNG
-	return 0
+	return t.rng.Intn(max)
 }
 
 // Combat runs combat. Returns true if party won.
