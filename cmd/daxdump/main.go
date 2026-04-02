@@ -15,6 +15,8 @@ func main() {
 	extractID := flag.Int("e", -1, "extract and write record with this ID to file")
 	dumpAll := flag.Bool("a", false, "decompress and hex-dump all records")
 	disasmECL := flag.Bool("d", false, "disassemble ECL bytecode")
+	runECL := flag.Bool("r", false, "run ECL script interactively")
+	runBlock := flag.Int("block", -1, "ECL block ID to run (default: first entry)")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -102,6 +104,25 @@ func main() {
 	}
 
 	_ = strings.TrimSpace
+
+	if *runECL {
+		gs := dax.NewTerminalHost(new(dax.GameState))
+		entries := f.Entries()
+		if len(entries) == 0 {
+			fmt.Fprintf(os.Stderr, "no ECL entries found\n")
+			os.Exit(1)
+		}
+
+		blockID := entries[0].ID
+		if *runBlock >= 0 {
+			blockID = byte(*runBlock)
+		}
+
+		d := dax.NewDriver(gs.GameState, f)
+		fmt.Printf("Running ECL block 0x%02X from %s\n", blockID, filepath.Base(path))
+		d.LoadArea(blockID)
+		fmt.Println("Done.")
+	}
 }
 
 func hexDump(data []byte, limit int) {
