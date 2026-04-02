@@ -1,7 +1,6 @@
 package dax
 
 import (
-	"encoding/binary"
 	"fmt"
 	"strings"
 )
@@ -205,19 +204,48 @@ func decompressECLString(raw []byte) string {
 	return sb.String()
 }
 
-// DisassembleECL disassembles all instructions from a decompressed ECL record.
-func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
-	if len(data) < 10 {
-		return ECLHeader{}, nil
+// parseECLHeader extracts the 5 entry-point addresses from the start of an
+// ECL block. This matches coab's load_ecl_dax + vm_init_ecl sequence:
+//   1. load_ecl_dax skips the first 2 bytes of the decoded block
+//   2. vm_init_ecl calls vm_LoadCmdSets(1) five times to parse operands
+//   3. vm_LoadCmdSets reads code at [ecl_offset+1], low at [ecl_offset+2]
+//      (skipping the "opcode" byte at ecl_offset+0), then high for codes 1-3
+//
+// The result is that bytes 2+ are parsed as 5 operands using parseOperand,
+// each yielding a 16-bit address via the operand's Word() method.
+func parseECLHeader(data []byte) ECLHeader {
+	if len(data) < 17 { // 2 skip + 5 operands × 3 bytes minimum
+		return ECLHeader{}
 	}
 
-	hdr := ECLHeader{
-		RunAddr:         binary.LittleEndian.Uint16(data[0:2]),
-		SearchLocation:  binary.LittleEndian.Uint16(data[2:4]),
-		PreCampCheck:    binary.LittleEndian.Uint16(data[4:6]),
-		CampInterrupted: binary.LittleEndian.Uint16(data[6:8]),
-		InitialEntry:    binary.LittleEndian.Uint16(data[8:10]),
+	off := 2 // skip the 2-byte header (coab's SetData offset)
+
+	readAddr := func() uint16 {
+		if off+3 > len(data) {
+			return 0
+		}
+		// vm_LoadCmdSets skips the "opcode" byte by reading offset+1
+		off++
+		op, consumed := parseOperand(data, off)
+		off += consumed
+		return op.Word()
 	}
+
+	return ECLHeader{
+		RunAddr:         readAddr(),
+		SearchLocation:  readAddr(),
+		PreCampCheck:    readAddr(),
+		CampInterrupted: readAddr(),
+		InitialEntry:    readAddr(),
+	}
+}
+
+// DisassembleECL disassembles all instructions from a decompressed ECL record.
+// The block layout mirrors coab: the first 2 bytes are skipped, then 5 operands
+// are parsed using the operand parser to extract the entry point addresses.
+// This matches load_ecl_dax (SetData skipping 2 bytes) + vm_init_ecl (5x vm_LoadCmdSets).
+func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
+	hdr := parseECLHeader(data)
 
 	var insts []Instruction
 	off := 0

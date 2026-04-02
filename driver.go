@@ -32,7 +32,7 @@ func (d *Driver) Step() {
 	if d.vm == nil {
 		return
 	}
-	d.vm.Run(d.Header.RunAddr)
+	d.vm.Run(d.Header.RunAddr - 0x8000)
 	d.handleReload()
 }
 
@@ -41,7 +41,7 @@ func (d *Driver) Search() {
 	if d.vm == nil {
 		return
 	}
-	d.vm.Run(d.Header.SearchLocation)
+	d.vm.Run(d.Header.SearchLocation - 0x8000)
 	d.handleReload()
 }
 
@@ -50,7 +50,7 @@ func (d *Driver) PreCamp() {
 	if d.vm == nil {
 		return
 	}
-	d.vm.Run(d.Header.PreCampCheck)
+	d.vm.Run(d.Header.PreCampCheck - 0x8000)
 	d.handleReload()
 }
 
@@ -59,7 +59,7 @@ func (d *Driver) CampInterrupted() {
 	if d.vm == nil {
 		return
 	}
-	d.vm.Run(d.Header.CampInterrupted)
+	d.vm.Run(d.Header.CampInterrupted - 0x8000)
 	d.handleReload()
 }
 
@@ -164,18 +164,23 @@ func (d *Driver) GameLoop(host Host) {
 // loadAndRun loads an ECL block, runs its initial entry, and handles
 // NEWECL chaining until execution settles.
 func (d *Driver) loadAndRun(blockID byte) {
-	d.BlockID = blockID
 	data := d.File.Decode(blockID)
 	if data == nil {
 		return
 	}
+	d.BlockID = blockID
 	d.State.ECLData = data
 
 	hdr, _ := DisassembleECL(data)
 	d.Header = hdr
 
-	d.vm = NewVM(d.State, blockID, data)
-	d.vm.Run(hdr.InitialEntry)
+	// coab's load_ecl_dax skips the first 2 bytes of the decoded block
+	// before loading into the ECL data buffer (SetData(block_mem, 2, ...)).
+	// VM entry points are virtual addresses in the 0x8000+ range;
+	// subtract 0x8000 to get the byte offset into the data[2:] slice.
+	code := data[2:]
+	d.vm = NewVM(d.State, blockID, code)
+	d.vm.Run(hdr.InitialEntry - 0x8000)
 	d.handleReload()
 }
 
@@ -200,15 +205,16 @@ func (d *Driver) handleReload() {
 			hdr, _ := DisassembleECL(data)
 			d.Header = hdr
 
-			d.vm = NewVM(d.State, newID, data)
-			d.vm.Run(hdr.InitialEntry)
+			code := data[2:]
+			d.vm = NewVM(d.State, newID, code)
+			d.vm.Run(hdr.InitialEntry - 0x8000)
 		}
 
 		// Phase 2: Run step address
-		d.vm.Run(d.Header.RunAddr)
+		d.vm.Run(d.Header.RunAddr - 0x8000)
 		if !d.vm.ReloadFlag() {
 			// Phase 3: Run Search address
-			d.vm.Run(d.Header.SearchLocation)
+			d.vm.Run(d.Header.SearchLocation - 0x8000)
 		}
 		// Loop back if another reload was triggered
 	}

@@ -8,7 +8,6 @@ import (
 
 func TestGameStateMemoryArea1(t *testing.T) {
 	gs := new(GameState)
-	// Write to Area1 region (0x4B00+)
 	gs.SetVar(0x4B00, 42)
 	if got := gs.GetVar(0x4B00); got != 42 {
 		t.Errorf("Area1 GetVar(0x4B00) = %d, want 42", got)
@@ -17,7 +16,6 @@ func TestGameStateMemoryArea1(t *testing.T) {
 
 func TestGameStateMemoryStruct(t *testing.T) {
 	gs := new(GameState)
-	// Write to Struct region (0x7A00+)
 	gs.SetVar(0x7A10, 100)
 	if got := gs.GetVar(0x7A10); got != 100 {
 		t.Errorf("Struct GetVar(0x7A10) = %d, want 100", got)
@@ -51,9 +49,8 @@ func TestGameStatePlayerFieldAccess(t *testing.T) {
 	gs.Players = append(gs.Players, p)
 	gs.SelectedIdx = 0
 
-	// Read player fields through Area2 address space
 	if v := gs.GetVar(0x7C00 + 0x127); v != 0x1234 {
-		t.Errorf("player exp_low = %04X, want 1234", v)
+		t.Errorf("player exp = %04X, want 1234", v)
 	}
 	if v := gs.GetVar(0x7C00 + 0xD6); v != 1 {
 		t.Errorf("player sex = %d, want 1", v)
@@ -62,8 +59,7 @@ func TestGameStatePlayerFieldAccess(t *testing.T) {
 		t.Errorf("player icon = %d, want 5", v)
 	}
 
-	// Write to player field
-	gs.SetVar(0x7C00+0xD6, 2) // set sex = female
+	gs.SetVar(0x7C00+0xD6, 2)
 	if p.Raw[0xD6] != 2 {
 		t.Errorf("player sex after write = %d, want 2", p.Raw[0xD6])
 	}
@@ -71,7 +67,7 @@ func TestGameStatePlayerFieldAccess(t *testing.T) {
 
 func TestGameStateGameArea(t *testing.T) {
 	gs := new(GameState)
-	gs.SetVar(0x7C00+0x312, 5) // game area
+	gs.SetVar(0x7C00+0x312, 5)
 	if gs.GameArea != 5 {
 		t.Errorf("GameArea = %d, want 5", gs.GameArea)
 	}
@@ -79,7 +75,6 @@ func TestGameStateGameArea(t *testing.T) {
 
 func TestGameStateNoPlayer(t *testing.T) {
 	gs := new(GameState)
-	// With no players, Area2 access should read raw bytes
 	gs.Area2[0x10] = 0xAB
 	gs.Area2[0x11] = 0xCD
 	v := gs.GetVar(0x7C00 + 0x10)
@@ -90,11 +85,9 @@ func TestGameStateNoPlayer(t *testing.T) {
 
 func TestGameStateMapPosition(t *testing.T) {
 	gs := new(GameState)
-
-	// Write position via high global addresses (0xC04B, 0xC04C, 0xC04D)
 	gs.SetVar(0xC04B, 5)  // posX
 	gs.SetVar(0xC04C, 10) // posY
-	gs.SetVar(0xC04D, 2)  // direction=2 → engine dir=4 (south)
+	gs.SetVar(0xC04D, 2)  // direction=2 -> engine dir=4 (south)
 
 	if gs.MapX != 5 {
 		t.Errorf("MapX = %d, want 5", gs.MapX)
@@ -109,18 +102,15 @@ func TestGameStateMapPosition(t *testing.T) {
 		t.Error("PosChanged should be true")
 	}
 
-	// Read back via high globals
 	if v := gs.GetVar(0xC04B); v != 5 {
 		t.Errorf("read MapX = %d, want 5", v)
 	}
 	if v := gs.GetVar(0xC04C); v != 10 {
 		t.Errorf("read MapY = %d, want 10", v)
 	}
-	if v := gs.GetVar(0xC04D); v != 2 { // direction/2
+	if v := gs.GetVar(0xC04D); v != 2 {
 		t.Errorf("read MapDir/2 = %d, want 2", v)
 	}
-
-	// Read via low globals
 	if v := gs.GetVar(0xFB); v != 5 {
 		t.Errorf("read 0xFB = %d, want 5", v)
 	}
@@ -134,18 +124,16 @@ func TestGameStateMapPosition(t *testing.T) {
 
 func TestGameStateDirectionMapping(t *testing.T) {
 	gs := new(GameState)
-
-	for vmDir, engineDir := range []int{0, 2, 4, 6} {
+	for vmDir, engineDir := range map[int]int{0: 0, 1: 2, 2: 4, 3: 6} {
 		gs.SetVar(0xC04D, uint16(vmDir))
 		if gs.MapDir != engineDir {
-			t.Errorf("vmDir=%d → MapDir=%d, want %d", vmDir, gs.MapDir, engineDir)
+			t.Errorf("vmDir=%d -> MapDir=%d, want %d", vmDir, gs.MapDir, engineDir)
 		}
 	}
 }
 
 func TestDriverLoadArea(t *testing.T) {
 	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
-
 	f, err := Open(filepath.Join(dir, "ecl1.dax"))
 	if err != nil {
 		t.Fatal(err)
@@ -158,8 +146,6 @@ func TestDriverLoadArea(t *testing.T) {
 
 	gs := new(GameState)
 	d := NewDriver(gs, f)
-
-	// Should not panic when loading an ECL block
 	d.LoadArea(entries[0].ID)
 
 	if d.BlockID != entries[0].ID {
@@ -167,7 +153,7 @@ func TestDriverLoadArea(t *testing.T) {
 	}
 }
 
-func TestDriverAllECLFiles(t *testing.T) {
+func TestECLHeaderParsing(t *testing.T) {
 	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
 
 	for i := 1; i <= 8; i++ {
@@ -179,9 +165,25 @@ func TestDriverAllECLFiles(t *testing.T) {
 			}
 
 			for _, e := range f.Entries() {
-				gs := new(GameState)
-				d := NewDriver(gs, f)
-				d.LoadArea(e.ID) // should not panic
+				data := f.Decode(e.ID)
+				if data == nil {
+					continue
+				}
+
+				hdr, _ := DisassembleECL(data)
+				codeSize := uint16(len(data) - 2)
+
+				checkAddr := func(name string, addr uint16) {
+					if addr < 0x8000 || addr >= 0x8000+codeSize {
+						t.Errorf("block 0x%02X: %s %04X out of range [0x8000, 0x8000+%d)",
+							e.ID, name, addr, codeSize)
+					}
+				}
+				checkAddr("RunAddr", hdr.RunAddr)
+				checkAddr("SearchLocation", hdr.SearchLocation)
+				checkAddr("PreCampCheck", hdr.PreCampCheck)
+				checkAddr("CampInterrupted", hdr.CampInterrupted)
+				checkAddr("InitialEntry", hdr.InitialEntry)
 			}
 		})
 	}
