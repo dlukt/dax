@@ -151,6 +151,55 @@ type ECLHeader struct {
 	InitialEntry    uint16
 }
 
+// inflateChar maps a 6-bit ECL character code to a printable character.
+// Values 0x00-0x1F map to uppercase A-Z and symbols (offset by 0x40).
+// Values >= 0x20 map directly to ASCII.
+func inflateChar(v uint16) byte {
+	if v <= 0x1F {
+		v += 0x40
+	}
+	return byte(v)
+}
+
+// decompressECLString decodes a 6-bit packed string from ECL bytecode.
+// Every 3 bytes produce 4 characters via the same packing scheme used
+// by the Gold Box engine's DecompressString function.
+func decompressECLString(raw []byte) string {
+	var sb strings.Builder
+	state := 1
+	var lastByte byte
+
+	for _, b := range raw {
+		var curr uint16
+		switch state {
+		case 1:
+			curr = uint16(b>>2) & 0x3F
+			if curr != 0 {
+				sb.WriteByte(inflateChar(curr))
+			}
+			state = 2
+		case 2:
+			curr = uint16(lastByte<<4|b>>4) & 0x3F
+			if curr != 0 {
+				sb.WriteByte(inflateChar(curr))
+			}
+			state = 3
+		case 3:
+			curr = uint16(lastByte<<2|b>>6) & 0x3F
+			if curr != 0 {
+				sb.WriteByte(inflateChar(curr))
+			}
+			curr = uint16(b) & 0x3F
+			if curr != 0 {
+				sb.WriteByte(inflateChar(curr))
+			}
+			state = 1
+		}
+		lastByte = b
+	}
+	return sb.String()
+}
+
 // DisassembleECL disassembles all instructions from a decompressed ECL record.
 func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
 	if len(data) < 10 {
@@ -214,7 +263,6 @@ func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
 				}
 				inst.Operands = operands
 			}
-
 		case 0x25, 0x26: // ONGOTO/ONGOSUB: 2 fixed + N dynamic
 			if len(operands) >= 2 {
 				tableSize := int(operands[1].resolveValue())
@@ -225,7 +273,6 @@ func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
 				}
 				inst.Operands = operands
 			}
-
 		case 0x2B: // HORIZMENU: 2 fixed + N dynamic
 			if len(operands) >= 2 {
 				itemCount := int(operands[1].resolveValue())
@@ -269,15 +316,16 @@ func parseOperand(data []byte, off int) (Operand, int) {
 		return op, 3
 
 	case code == 0x80:
-		strLen := int(low)
+		// Compressed string: low = byte length, data is 6-bit packed chars
+		rawLen := int(low)
 		available := len(data) - (off + 2)
-		if strLen > available {
-			strLen = available
+		if rawLen > available {
+			rawLen = available
 		}
-		if strLen > 0 {
-			op.Text = string(data[off+2 : off+2+strLen])
+		if rawLen > 0 {
+			op.Text = decompressECLString(data[off+2 : off+2+rawLen])
 		}
-		return op, 2 + strLen
+		return op, 2 + rawLen
 
 	case code == 0x81:
 		if off+2 < len(data) {
