@@ -101,6 +101,7 @@ func TestVMExit(t *testing.T) {
 	code := []byte{0x00} // EXIT
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10) // start at code section (past header)
 	if !vm.stop {
 		t.Error("VM should have stopped")
@@ -121,6 +122,7 @@ func TestVMGoto(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 	if !vm.stop {
 		t.Error("VM should have stopped after GOTO -> EXIT")
@@ -157,6 +159,7 @@ func TestVMGosubReturn(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x10] != 5 {
@@ -193,6 +196,7 @@ func TestVMCompareAndIf(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x20] != 1 {
@@ -232,6 +236,7 @@ func TestVMArithmetic(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x30] != 8 {
@@ -267,6 +272,7 @@ func TestVMBitwiseOps(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x40] != 0x0F {
@@ -291,6 +297,7 @@ func TestVMRandom(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x50] != 3 {
@@ -342,6 +349,7 @@ func TestVMNestedGosub(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x50] != 1 {
@@ -411,6 +419,7 @@ func TestVMPrint(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	// Empty string printed — just verify no crash
@@ -431,6 +440,7 @@ func TestVMNewECL(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if !vm.stop {
@@ -454,6 +464,7 @@ func TestVMCallStackEmptyReturn(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if !vm.stop {
@@ -473,6 +484,7 @@ func TestVMPartyStr(t *testing.T) {
 
 	data := buildECL(nil, code)
 	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
 	vm.Run(10)
 
 	if h.vars[0x60] != 42 {

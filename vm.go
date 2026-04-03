@@ -1,5 +1,10 @@
 package dax
 
+import (
+	"fmt"
+	"os"
+)
+
 // Host provides game-state and I/O callbacks for the ECL VM.
 // The VM itself is stateless with respect to the game world — all
 // memory, rendering, and input go through this interface.
@@ -70,8 +75,8 @@ type Host interface {
 type VM struct {
 	host Host
 
-	data []byte   // current ECL bytecode (the decoded record)
-	off  uint16   // program counter (index into data)
+	mem  []byte   // flat 64K memory image (indexed by virtual address)
+	off  uint16   // program counter (virtual address)
 
 	compareFlags [6]bool // EQ, NE, LT, GT, LE, GE
 	callStack    []uint16
@@ -85,15 +90,59 @@ type VM struct {
 	strIndex   int
 	lastOpcode byte // current opcode being executed
 
+	// Trace enables execution logging to stderr.
+	Trace bool
 }
 
 // NewVM creates a VM for the given ECL bytecode block.
-func NewVM(host Host, blockID byte, data []byte) *VM {
+// code is the concatenated decoded ECL blocks.  The VM builds a flat
+// 64K memory image from the host's memory regions plus the ECL code.
+func NewVM(host Host, blockID byte, code []byte) *VM {
+	gs, ok := host.(*GameState)
+	if !ok {
+		// Fallback: use code directly as data
+		return &VM{
+			host:    host,
+			mem:     code,
+			blockID: blockID,
+		}
+	}
+
+	// Build flat 64K memory image
+	mem := make([]byte, 0x10000)
+
+	// Struct at 0x7A00 (0x400 bytes, each word maps to 2 bytes)
+	for i := 0; i < len(gs.Struct); i++ {
+		mem[0x7A00+i] = gs.Struct[i]
+	}
+
+	// Area1 at 0x4B00 (0x800 bytes, word-addressed)
+	for i := 0; i < len(gs.Area1); i++ {
+		mem[0x4B00+i] = gs.Area1[i]
+	}
+
+	// Area2 raw bytes at 0x7C00
+	for i := 0; i < len(gs.Area2); i++ {
+		mem[0x7C00+i] = gs.Area2[i]
+	}
+
+	// ECL code at 0x8000
+	codeEnd := len(code)
+	if codeEnd > 0x8000 {
+		codeEnd = 0x8000
+	}
+	copy(mem[0x8000:], code[:codeEnd])
+
 	return &VM{
 		host:    host,
-		data:    data,
+		mem:     mem,
 		blockID: blockID,
 	}
+}
+
+// SetBase is a no-op now (kept for test compatibility).
+func (vm *VM) SetBase(base uint16) {
+	// Flat memory model doesn't need a base offset.
 }
 
 // BlockID returns the current ECL block ID.
@@ -112,22 +161,67 @@ func (vm *VM) Run(entry uint16) {
 
 	steps := 0
 	for !vm.stop {
-		if int(vm.off) >= len(vm.data) {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
 			break
 		}
-		opcode := vm.data[vm.off]
+		opcode := vm.mem[idx]
+		pc := vm.off
 		vm.off++
 
 		if int(opcode) >= len(dispatchTable) || dispatchTable[opcode] == nil {
+			if vm.Trace {
+				fmt.Fprintf(os.Stderr, "  [%04X] op %02X (unknown)\n", pc, opcode)
+			}
 			continue
 		}
 		vm.lastOpcode = opcode
 		dispatchTable[opcode](vm)
 
+		if vm.Trace && steps < 200 {
+			name := opcodeName(opcode)
+			extra := ""
+			if opcode == 0x03 { // COMPARE
+				if vm.opCount >= 2 {
+					a := vm.resolve(vm.ops[0])
+					b := vm.resolve(vm.ops[1])
+					extra = fmt.Sprintf(" %04X vs %04X", a, b)
+					for i, f := range vm.compareFlags {
+						if f {
+							extra += fmt.Sprintf(" [%s]", [...]string{"EQ", "NE", "LT", "GT", "LE", "GE"}[i])
+						}
+					}
+				}
+			} else if opcode >= 0x16 && opcode <= 0x1B { // IF_*
+				flagIdx := opcode - 0x16
+				name = [...]string{"IF_EQ", "IF_NE", "IF_LT", "IF_GT", "IF_LE", "IF_GE"}[flagIdx]
+				extra = fmt.Sprintf(" flag=%v", vm.compareFlags[flagIdx])
+			} else if opcode == 0x11 || opcode == 0x12 { // PRINT
+				if vm.opCount >= 1 {
+					extra = fmt.Sprintf(" %q", vm.resolveString(vm.ops[0]))
+				}
+			} else if opcode == 0x01 { // GOTO
+				if vm.opCount >= 1 {
+					extra = fmt.Sprintf(" -> %04X (ops[0]={Code:%02X,Low:%02X,High:%02X})",
+						vm.ops[0].Word(), vm.ops[0].Code, vm.ops[0].Low, vm.ops[0].High)
+				}
+			} else if opcode >= 0x04 && opcode <= 0x07 { // ARITH
+				if vm.opCount >= 2 {
+					a := vm.resolve(vm.ops[0])
+					b := vm.resolve(vm.ops[1])
+					extra = fmt.Sprintf(" %04X op %04X -> dst", a, b)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "  [%04X] %s%s  (off now=%04X)\n", pc, name, extra, vm.off)
+		}
+
 		steps++
 		if steps >= maxVMSteps {
 			break
 		}
+	}
+	if vm.Trace {
+		fmt.Fprintf(os.Stderr, "  VM stopped after %d steps, off=%04X\n", steps, vm.off)
 	}
 }
 
@@ -158,8 +252,16 @@ func (vm *VM) loadOps(n int) {
 	vm.strIndex = 0
 	vm.opCount = 0
 
-	for i := 0; i < n && int(vm.off) < len(vm.data); i++ {
-		op, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < n; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		op, consumed := parseOperand(vm.mem, idx)
+		if vm.Trace {
+			fmt.Fprintf(os.Stderr, "    loadOps[%d]: idx=%04X code=%02X low=%02X high=%02X consumed=%d\n",
+				i, idx, op.Code, op.Low, op.High, consumed)
+		}
 		vm.off += uint16(consumed)
 		if i < len(vm.ops) {
 			vm.ops[i] = op
@@ -178,10 +280,11 @@ func (vm *VM) loadOps(n int) {
 
 // skipNext advances past the next instruction (used by IF opcodes).
 func (vm *VM) skipNext() {
-	if int(vm.off) >= len(vm.data) {
+	idx := int(vm.off)
+	if idx < 0 || idx >= len(vm.mem) {
 		return
 	}
-	opcode := vm.data[vm.off]
+	opcode := vm.mem[idx]
 	vm.off++
 
 	if int(opcode) >= len(opcodeOperandCount) {
@@ -218,8 +321,12 @@ func (vm *VM) skipNext() {
 
 // loadOpsDynamic loads additional operands after the fixed set.
 func (vm *VM) loadOpsDynamic(count int) {
-	for i := 0; i < count && int(vm.off) < len(vm.data); i++ {
-		_, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < count; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		_, consumed := parseOperand(vm.mem, idx)
 		vm.off += uint16(consumed)
 	}
 }
@@ -376,13 +483,13 @@ func (vm *VM) opExit() {
 // 0x01 GOTO
 func (vm *VM) opGoto() {
 	vm.loadOps(1)
-	vm.off = vm.resolve(vm.ops[0])
+	vm.off = vm.ops[0].Word()
 }
 
 // 0x02 GOSUB
 func (vm *VM) opGosub() {
 	vm.loadOps(1)
-	target := vm.resolve(vm.ops[0])
+	target := vm.ops[0].Word()
 	vm.callStack = append(vm.callStack, vm.off)
 	vm.off = target
 }
@@ -406,7 +513,7 @@ func (vm *VM) opCompare() {
 // 0x04-0x07 ADD/SUB/DIV/MUL
 func (vm *VM) opArith() {
 	vm.loadOps(3)
-	// The current opcode is in vm.data[vm.off-1], but we need to know
+	// The current opcode is in vm.mem[vm.off-1], but we need to know
 	// which arithmetic op. Read from the instruction byte saved before loadOps.
 	// We reconstruct: the opcode byte was read in Run(), and we don't save it.
 	// Instead, look at the first operand code pattern — all arith use 3 operands.
@@ -552,8 +659,12 @@ func (vm *VM) opVertMenu() {
 	menuCount := int(vm.ops[2].Low)
 
 	items := make([]string, menuCount)
-	for i := 0; i < menuCount && int(vm.off) < len(vm.data); i++ {
-		op, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < menuCount; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		op, consumed := parseOperand(vm.mem, idx)
 		vm.off += uint16(consumed)
 		items[i] = vm.resolveString(op)
 	}
@@ -648,8 +759,12 @@ func (vm *VM) opOnGoto() {
 	tableSize := int(vm.ops[1].Low)
 
 	table := make([]uint16, tableSize)
-	for i := 0; i < tableSize && int(vm.off) < len(vm.data); i++ {
-		op, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < tableSize; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		op, consumed := parseOperand(vm.mem, idx)
 		vm.off += uint16(consumed)
 		table[i] = vm.resolve(op)
 	}
@@ -669,8 +784,12 @@ func (vm *VM) opOnGosub() {
 	tableSize := int(vm.ops[1].Low)
 
 	table := make([]uint16, tableSize)
-	for i := 0; i < tableSize && int(vm.off) < len(vm.data); i++ {
-		op, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < tableSize; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		op, consumed := parseOperand(vm.mem, idx)
 		vm.off += uint16(consumed)
 		table[i] = vm.resolve(op)
 	}
@@ -730,8 +849,12 @@ func (vm *VM) opHorizMenu() {
 	itemCount := int(vm.ops[1].Low)
 
 	items := make([]string, itemCount)
-	for i := 0; i < itemCount && int(vm.off) < len(vm.data); i++ {
-		op, consumed := parseOperand(vm.data, int(vm.off))
+	for i := 0; i < itemCount; i++ {
+		idx := int(vm.off)
+		if idx < 0 || idx >= len(vm.mem) {
+			break
+		}
+		op, consumed := parseOperand(vm.mem, idx)
 		vm.off += uint16(consumed)
 		items[i] = vm.resolveString(op)
 	}
@@ -866,9 +989,9 @@ func (vm *VM) opSpell() {
 	for i := 0; i < 3; i++ {
 		args[i] = int(vm.resolve(vm.ops[i]))
 	}
-	found := vm.host.Spell(args)
-	vm.compareFlags[0] = found
-	vm.compareFlags[1] = !found
+	vm.host.Spell(args)
+	// Note: coab's CMD_Spell does NOT set compare flags — it only
+	// writes results to memory via vm_SetMemoryValue.
 }
 
 // 0x3C PROTECT
@@ -933,4 +1056,31 @@ func (vm *VM) saveResult(dst Operand, val uint16) {
 		vm.host.SetVar(dst.Word(), val)
 	}
 	// Code 0x00 (literal) is not a valid destination — silently ignore
+}
+
+// opcodeName returns a human-readable name for an opcode byte.
+func opcodeName(op byte) string {
+	names := [...]string{
+		0x00: "EXIT", 0x01: "GOTO", 0x02: "GOSUB", 0x03: "COMPARE",
+		0x04: "ADD", 0x05: "SUB", 0x06: "DIV", 0x07: "MUL",
+		0x08: "RANDOM", 0x09: "SAVE", 0x0A: "LOAD_CHAR", 0x0B: "LOAD_MONST",
+		0x0C: "SETUP_MONST", 0x0D: "APPROACH", 0x0E: "PICTURE", 0x0F: "INPUT_NUM",
+		0x10: "INPUT_STR", 0x11: "PRINT", 0x12: "PRINTCLR", 0x13: "RETURN",
+		0x14: "CMPAND", 0x15: "VERTMENU", 0x16: "IF_EQ", 0x17: "IF_NE",
+		0x18: "IF_LT", 0x19: "IF_GT", 0x1A: "IF_LE", 0x1B: "IF_GE",
+		0x1C: "CLRMONST", 0x1D: "PARTYSTR", 0x1E: "CHECKPARTY", 0x1F: "UNKNOWN_1F",
+		0x20: "NEWECL", 0x21: "LOADFILES", 0x22: "PARTYSURP", 0x23: "SURPRISE",
+		0x24: "COMBAT", 0x25: "ONGOTO", 0x26: "ONGOSUB", 0x27: "TREASURE",
+		0x28: "ROB", 0x29: "ENCNTMENU", 0x2A: "GETTABLE", 0x2B: "HORIZMENU",
+		0x2C: "PARLAY", 0x2D: "CALL", 0x2E: "DAMAGE", 0x2F: "AND",
+		0x30: "OR", 0x31: "SPRITEOFF", 0x32: "FINDITEM", 0x33: "PRINTRET",
+		0x34: "ECLCLOCK", 0x35: "SAVETABLE", 0x36: "ADDNPC", 0x37: "LOADPIECES",
+		0x38: "PROGRAM", 0x39: "WHO", 0x3A: "DELAY", 0x3B: "SPELL",
+		0x3C: "PROTECT", 0x3D: "CLEARBOX", 0x3E: "DUMP", 0x3F: "FINDSPEC",
+		0x40: "DESTROYITEM",
+	}
+	if int(op) < len(names) && names[op] != "" {
+		return names[op]
+	}
+	return fmt.Sprintf("OP_%02X", op)
 }

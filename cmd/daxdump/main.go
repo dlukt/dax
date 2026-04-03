@@ -16,7 +16,8 @@ func main() {
 	dumpAll := flag.Bool("a", false, "decompress and hex-dump all records")
 	disasmECL := flag.Bool("d", false, "disassemble ECL bytecode")
 	runECL := flag.Bool("r", false, "run ECL script interactively")
-	runBlock := flag.Int("block", -1, "ECL block ID to run (default: first entry)")
+	runBlock := flag.Int("block", -1, "ECL block ID to run (default: from save game)")
+	trace := flag.Bool("t", false, "trace VM execution")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -108,10 +109,26 @@ func main() {
 	if *runECL {
 		gs := dax.NewTerminalHost(new(dax.GameState))
 
-		// Try to load party from same directory
 		partyDir := filepath.Dir(path)
+		var saveBlockID byte
+
+		// Try to load save game first (provides Area1/Area2/Struct/ECL state)
+		savePattern := filepath.Join(partyDir, "savgam*.dat")
+		saveFiles, _ := filepath.Glob(savePattern)
+		var saveECLData []byte
+		if len(saveFiles) > 0 {
+			if sd, err := dax.LoadSaveGame(saveFiles[0]); err == nil {
+				gs.GameState.ApplySaveGame(sd)
+				saveBlockID = sd.LastEclBlockID
+				saveECLData = sd.ECLData
+				fmt.Fprintf(os.Stderr, "Loaded save game from %s (area=%d, block=0x%02X, pos=%d,%d dir=%d)\n",
+					filepath.Base(saveFiles[0]), sd.GameArea, sd.LastEclBlockID, sd.MapX, sd.MapY, sd.MapDir)
+			}
+		}
+
+		// Load party characters
 		if party, err := dax.LoadParty(partyDir); err == nil && len(party.Players) > 0 {
-			gs.GameState = party
+			gs.GameState.Players = party.Players
 			fmt.Fprintf(os.Stderr, "Loaded %d characters from %s\n", len(party.Players), partyDir)
 			for i, p := range party.Players {
 				name := dax.PlayerName(p)
@@ -127,12 +144,21 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Determine block ID: -block flag > save game > first entry
 		blockID := entries[0].ID
+		if saveBlockID != 0 {
+			blockID = saveBlockID
+		}
 		if *runBlock >= 0 {
 			blockID = byte(*runBlock)
 		}
 
 		d := dax.NewDriver(gs.GameState, f)
+		d.DataDir = partyDir
+		d.Trace = *trace
+		if saveECLData != nil {
+			d.SetSaveECLData(saveECLData)
+		}
 		fmt.Printf("Running ECL block 0x%02X from %s\n", blockID, filepath.Base(path))
 		d.LoadArea(blockID)
 		d.GameLoop(gs)

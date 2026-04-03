@@ -200,18 +200,21 @@ func (t *TerminalHost) CallSub(id int) {
 
 // FindItem checks if party has an item.
 func (t *TerminalHost) FindItem(itemType int) bool {
-	fmt.Printf("[FindItem type=%d -> not found]\n", itemType)
-	return false
+	found := t.GameState.FindItem(itemType)
+	fmt.Printf("[FindItem type=%d -> %v]\n", itemType, found)
+	return found
 }
 
-// DestroyItems removes items by type.
+// DestroyItems removes items by type from the selected player.
 func (t *TerminalHost) DestroyItems(itemType int) {
 	fmt.Printf("[DestroyItems type=%d]\n", itemType)
+	t.GameState.DestroyItems(itemType)
 }
 
-// FindSpecial checks player affects.
+// FindSpecial checks if the selected player has an active affect.
 func (t *TerminalHost) FindSpecial(affect int) bool {
-	return false
+	found := t.GameState.FindSpecial(affect)
+	return found
 }
 
 // PartyStrength calculates party combat strength.
@@ -231,9 +234,9 @@ func (t *TerminalHost) PartySurprise(args [2]int) (bool, bool) {
 // Surprise rolls surprise for both sides.
 func (t *TerminalHost) Surprise(args [4]int) {}
 
-// Spell searches party for spell.
+// Spell searches party for a memorized spell.
 func (t *TerminalHost) Spell(args [3]int) bool {
-	return false
+	return t.GameState.Spell(args)
 }
 
 // Damage deals dice-based damage.
@@ -243,11 +246,13 @@ func (t *TerminalHost) Damage(dice, count, target, a, b int) {
 
 // GetTable reads from memory table.
 func (t *TerminalHost) GetTable(table, index, count int) uint16 {
-	return 0
+	return t.GameState.GetTable(table, index, count)
 }
 
 // SaveTable writes to memory table.
-func (t *TerminalHost) SaveTable(table, index, count int, val uint16) {}
+func (t *TerminalHost) SaveTable(table, index, count int, val uint16) {
+	t.GameState.SaveTable(table, index, count, val)
+}
 
 // Clock advances game time.
 func (t *TerminalHost) Clock(hours, minutes int) {

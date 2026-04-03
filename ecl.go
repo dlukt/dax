@@ -213,12 +213,15 @@ func decompressECLString(raw []byte) string {
 //
 // The result is that bytes 2+ are parsed as 5 operands using parseOperand,
 // each yielding a 16-bit address via the operand's Word() method.
+// parseECLHeader extracts the 5 entry-point addresses from the start of a
+// stripped ECL block. The caller must strip the 2-byte DAX block header before
+// calling this function.
 func parseECLHeader(data []byte) ECLHeader {
-	if len(data) < 17 { // 2 skip + 5 operands × 3 bytes minimum
+	if len(data) < 15 { // 5 operands × 3 bytes minimum
 		return ECLHeader{}
 	}
 
-	off := 2 // skip the 2-byte header (coab's SetData offset)
+	off := 0 // data already stripped of 2-byte DAX prefix
 
 	readAddr := func() uint16 {
 		if off+3 > len(data) {
@@ -240,10 +243,8 @@ func parseECLHeader(data []byte) ECLHeader {
 	}
 }
 
-// DisassembleECL disassembles all instructions from a decompressed ECL record.
-// The block layout mirrors coab: the first 2 bytes are skipped, then 5 operands
-// are parsed using the operand parser to extract the entry point addresses.
-// This matches load_ecl_dax (SetData skipping 2 bytes) + vm_init_ecl (5x vm_LoadCmdSets).
+// DisassembleECL disassembles all instructions from a stripped ECL block.
+// The caller must strip the 2-byte DAX block header before calling this function.
 func DisassembleECL(data []byte) (ECLHeader, []Instruction) {
 	hdr := parseECLHeader(data)
 
@@ -372,6 +373,7 @@ func parseOperand(data []byte, off int) (Operand, int) {
 }
 
 // DisassembleAllECL disassembles all records from an ECL DAX file.
+// It strips the 2-byte DAX block header from each record before disassembling.
 func (f *File) DisassembleAllECL() map[byte]struct {
 	Header ECLHeader
 	Code   []Instruction
@@ -383,7 +385,12 @@ func (f *File) DisassembleAllECL() map[byte]struct {
 
 	all := f.DecodeAll()
 	for id, raw := range all {
-		hdr, insts := DisassembleECL(raw)
+		// Strip 2-byte DAX block header (coab: SetData(block_mem, 2, block_size-2))
+		data := raw
+		if len(data) > 2 {
+			data = data[2:]
+		}
+		hdr, insts := DisassembleECL(data)
 		result[id] = struct {
 			Header ECLHeader
 			Code   []Instruction
