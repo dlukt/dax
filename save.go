@@ -374,3 +374,138 @@ func LoadAffects(path string) ([]Affect, error) {
 	}
 	return affects, nil
 }
+
+// --- Monster loading ---
+
+// LoadMonster loads a monster character from a DAX record.
+// Monster files (monNcha.dax) use the same Player format as player characters.
+// id selects which record to decode from the DAX container.
+func LoadMonster(daxPath string, id byte) (*Player, error) {
+	f, err := Open(daxPath)
+	if err != nil {
+		return nil, fmt.Errorf("load monster: %w", err)
+	}
+	raw := f.Decode(id)
+	if raw == nil {
+		return nil, fmt.Errorf("load monster: record 0x%02X not found in %s", id, daxPath)
+	}
+	if len(raw) == PoolRadPlayerSize {
+		return ConvertPoolRadPlayer(raw), nil
+	}
+	if len(raw) >= 0x1A6 {
+		p := new(Player)
+		copy(p.Raw[:], raw[:0x1A6])
+		p.HPCurrent = p.Raw[0x1A4]
+		return p, nil
+	}
+	return nil, fmt.Errorf("load monster: unexpected size %d in %s", len(raw), daxPath)
+}
+
+// LoadMonsterItems loads items from a monster item DAX file (monNitm.dax).
+func LoadMonsterItems(daxPath string, id byte) ([]Item, error) {
+	f, err := Open(daxPath)
+	if err != nil {
+		return nil, fmt.Errorf("load monster items: %w", err)
+	}
+	raw := f.Decode(id)
+	if raw == nil {
+		return nil, nil // no items for this monster
+	}
+	var items []Item
+	for offset := 0; offset+ItemSize <= len(raw); offset += ItemSize {
+		items = append(items, parseItem(raw[offset:offset+ItemSize]))
+	}
+	return items, nil
+}
+
+// LoadMonsterAffects loads affects from a monster affect DAX file (monNspc.dax).
+func LoadMonsterAffects(daxPath string, id byte) ([]Affect, error) {
+	f, err := Open(daxPath)
+	if err != nil {
+		return nil, fmt.Errorf("load monster affects: %w", err)
+	}
+	raw := f.Decode(id)
+	if raw == nil {
+		return nil, nil // no affects for this monster
+	}
+	var affects []Affect
+	for offset := 0; offset+AffectSize <= len(raw); offset += AffectSize {
+		affects = append(affects, Affect{
+			Type:          raw[offset+0x0],
+			Minutes:       binary.LittleEndian.Uint16(raw[offset+0x1:]),
+			AffectData:    raw[offset+0x3],
+			CallAffectTab: raw[offset+0x4] != 0,
+		})
+	}
+	return affects, nil
+}
+
+// --- Item database ---
+
+const itemDataSize = 0x10
+
+// ItemData describes one item type entry from the "items" database file.
+// Each entry is 16 bytes. Layout matches coab's ItemData class.
+type ItemData struct {
+	Slot            byte   // 0x00: equipment slot
+	HandsCount      byte   // 0x01: number of hands required
+	DiceCountLarge  byte   // 0x02: dice count vs large targets
+	DiceSizeLarge   byte   // 0x03: dice size vs large targets
+	BonusLarge      int8   // 0x04: damage bonus vs large targets
+	NumberAttacks   byte   // 0x05: number of attacks
+	Field06         byte   // 0x06
+	Field07         byte   // 0x07
+	Field08         byte   // 0x08
+	DiceCountNormal byte   // 0x09: dice count vs normal targets (ranged)
+	DiceSizeNormal  byte   // 0x0A: dice size vs normal targets (ranged)
+	BonusNormal     int8   // 0x0B: damage bonus vs normal targets
+	Range           byte   // 0x0C: weapon range (0=melee, >0=ranged)
+	ClassFlags      byte   // 0x0D: class usage flags
+	Flags           byte   // 0x0E: item data flags (arrows, melee, etc.)
+	Field15         byte   // 0x0F
+}
+
+// LoadItemDatabase reads the "items" file from the game data directory.
+// The file starts with a 2-byte header followed by 16-byte ItemData records.
+// Returns up to 129 entries (Pool of Radiance has 128).
+func LoadItemDatabase(path string) ([]ItemData, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("load item database: %w", err)
+	}
+	if len(data) < 2+itemDataSize {
+		return nil, fmt.Errorf("load item database: file too small (%d bytes)", len(data))
+	}
+
+	// Skip 2-byte header
+	records := data[2:]
+	count := len(records) / itemDataSize
+	if count > 0x81 {
+		count = 0x81
+	}
+
+	table := make([]ItemData, count)
+	for i := 0; i < count; i++ {
+		off := i * itemDataSize
+		rec := records[off : off+itemDataSize]
+		table[i] = ItemData{
+			Slot:            rec[0x00],
+			HandsCount:      rec[0x01],
+			DiceCountLarge:  rec[0x02],
+			DiceSizeLarge:   rec[0x03],
+			BonusLarge:      int8(rec[0x04]),
+			NumberAttacks:   rec[0x05],
+			Field06:         rec[0x06],
+			Field07:         rec[0x07],
+			Field08:         rec[0x08],
+			DiceCountNormal: rec[0x09],
+			DiceSizeNormal:  rec[0x0A],
+			BonusNormal:     int8(rec[0x0B]),
+			Range:           rec[0x0C],
+			ClassFlags:      rec[0x0D],
+			Flags:           rec[0x0E],
+			Field15:         rec[0x0F],
+		}
+	}
+	return table, nil
+}

@@ -96,6 +96,9 @@ func opWord(val uint16) []byte { return []byte{0x02, byte(val), byte(val >> 8)} 
 // operand memory: code=0x01, low, high
 func opMem(addr uint16) []byte { return []byte{0x01, byte(addr), byte(addr >> 8)} }
 
+// operand empty string: code=0x80, length=0
+func opEmptyStr() []byte { return []byte{0x80, 0x00} }
+
 func TestVMExit(t *testing.T) {
 	h := newTestHost()
 	code := []byte{0x00} // EXIT
@@ -521,4 +524,130 @@ func TestVMRunRealECL(t *testing.T) {
 	vm := NewVM(h, entries[0].ID, raw)
 
 	vm.Run(hdr.InitialEntry)
+}
+
+func TestVMVertMenuStoresResult(t *testing.T) {
+	h := newTestHost()
+	h.menuRes = 1 // user selects item at index 1
+
+	// Build VERTMENU bytecode:
+	//   VERTMENU [mem:0x0050], "", 2, "", ""
+	//   EXIT
+	code := []byte{0x15} // VERTMENU
+	code = append(code, opMem(0x50)...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, opLit(2)...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, 0x00) // EXIT
+
+	data := buildECL(nil, code)
+	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
+	vm.Run(10)
+
+	if !vm.stop {
+		t.Error("VM should have stopped")
+	}
+	if h.vars[0x50] != 1 {
+		t.Errorf("var[0x50] = %d, want 1 (menu selection)", h.vars[0x50])
+	}
+	if len(h.menus) != 1 {
+		t.Fatalf("expected 1 menu call, got %d", len(h.menus))
+	}
+	if len(h.menus[0]) != 2 {
+		t.Errorf("menu items = %v, want 2 items", h.menus[0])
+	}
+}
+
+func TestVMHorizMenuStoresResult(t *testing.T) {
+	h := newTestHost()
+	h.menuRes = 2 // user selects item at index 2
+
+	// Build HORIZMENU bytecode:
+	//   HORIZMENU [mem:0x0060], 3, "", "", ""
+	//   EXIT
+	code := []byte{0x2B} // HORIZMENU
+	code = append(code, opMem(0x60)...)
+	code = append(code, opLit(3)...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, opEmptyStr()...)
+	code = append(code, 0x00) // EXIT
+
+	data := buildECL(nil, code)
+	vm := NewVM(h, 0x01, data)
+	vm.SetBase(0)
+	vm.Run(10)
+
+	if !vm.stop {
+		t.Error("VM should have stopped")
+	}
+	if h.vars[0x60] != 2 {
+		t.Errorf("var[0x60] = %d, want 2 (menu selection)", h.vars[0x60])
+	}
+	if len(h.menus) != 1 {
+		t.Fatalf("expected 1 menu call, got %d", len(h.menus))
+	}
+	if len(h.menus[0]) != 3 {
+		t.Errorf("menu items = %v, want 3 items", h.menus[0])
+	}
+}
+
+func TestLoadMonsterFromDAX(t *testing.T) {
+	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
+
+	p, err := LoadMonster(filepath.Join(dir, "mon1cha.dax"), 0x02)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := PlayerName(p)
+	if name == "" {
+		t.Error("expected non-empty monster name")
+	}
+	if p.HPCurrent == 0 {
+		t.Error("expected non-zero HP")
+	}
+}
+
+func TestLoadMonsterItemsFromDAX(t *testing.T) {
+	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
+
+	items, err := LoadMonsterItems(filepath.Join(dir, "mon1itm.dax"), 0x02)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Some monsters may have no items; just verify no error and valid struct
+	for _, it := range items {
+		if it.Type == 0 && it.Name == "" {
+			t.Error("item should have type or name")
+		}
+	}
+}
+
+func TestLoadMonsterAffectsFromDAX(t *testing.T) {
+	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
+
+	affects, err := LoadMonsterAffects(filepath.Join(dir, "mon2spc.dax"), 0x37)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Just verify parsing doesn't error; some records may be empty
+	_ = affects
+}
+
+func TestLoadItemDatabaseFromGame(t *testing.T) {
+	dir := filepath.Join("..", "pool-remake", "dos", "pool-of-radiance")
+
+	table, err := LoadItemDatabase(filepath.Join(dir, "items"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(table) == 0 {
+		t.Fatal("expected at least one item data entry")
+	}
+	// First entry should have a valid slot value
+	if table[0].Slot > 20 {
+		t.Errorf("item[0] slot = %d, expected <= 20", table[0].Slot)
+	}
 }

@@ -669,8 +669,8 @@ func (vm *VM) opVertMenu() {
 		items[i] = vm.resolveString(op)
 	}
 
-	_ = vm.host.ShowMenu(items, true)
-	// Result goes to memory — host stores selection
+	result := vm.host.ShowMenu(items, true)
+	vm.saveResult(vm.ops[0], uint16(result))
 }
 
 // 0x16-0x1B IF_EQ through IF_GE
@@ -859,7 +859,8 @@ func (vm *VM) opHorizMenu() {
 		items[i] = vm.resolveString(op)
 	}
 
-	_ = vm.host.ShowMenu(items, false)
+	result := vm.host.ShowMenu(items, false)
+	vm.saveResult(vm.ops[0], uint16(result))
 }
 
 // 0x2C PARLAY

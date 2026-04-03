@@ -38,7 +38,7 @@ var opcodes = [0x41]opcodeDef{
 	{0x1C, "CLRMONST", 0, "Clear all loaded monsters"},
 	{0x1D, "PARTYSTR", 1, "Calculate party combat strength"},
 	{0x1E, "CHECKPARTY", 6, "Check party affects/skills"},
-	{0x1F, "UNKNOWN_1F", 2, "Unimplemented"},
+	{0x1F, "UNKNOWN_1F", 2, "Unknown — unimplemented in reference (coab) too"},
 	{0x20, "NEWECL", 1, "Load new ECL script block"},
 	{0x21, "LOADFILES", 3, "Load area resources"},
 	{0x22, "PARTYSURP", 2, "Check party ranger/surprise"},
